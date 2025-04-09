@@ -5,3 +5,5 @@ httpx
 sqlalchemy
 pydantic
 python-dotenv
+websockets
+requests
