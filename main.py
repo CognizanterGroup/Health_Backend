@@ -6,7 +6,7 @@ import logging
 import sys, time
 import uvicorn
 import uuid
-from fastapi import FastAPI, WebSocket, BackgroundTasks, HTTPException, Request, Response
+from fastapi import FastAPI, WebSocket, BackgroundTasks, HTTPException, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
