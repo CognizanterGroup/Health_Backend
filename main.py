@@ -35,7 +35,7 @@ RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY")
 RUNPOD_ENDPOINT_ID = os.getenv("RUNPOD_ENDPOINT_ID", "fswz4ju3asche1")
 RUNPOD_API_URL = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/run"
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/runpod_jobs.db")
-PUBLIC_URL = os.getenv("PUBLIC_URL", "https://your-api-domain.com")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "https://health-services-43i9.onrender.com")
 
 if not RUNPOD_API_KEY:
     raise ValueError("Missing required RUNPOD_API_KEY environment variable!")
@@ -166,7 +166,7 @@ async def submit_job(request: JobRequest, background_tasks: BackgroundTasks, db:
     job_id = str(uuid.uuid4())
     
     # Determine webhook URL (use custom if provided, otherwise use our endpoint)
-    webhook_url = request.webhook_url or f"{PUBLIC_URL}/webhook"
+    webhook_url = "https://health-services-43i9.onrender.com/webhook"
     
     # Create a new job record
     new_job = JobRecord(
@@ -209,7 +209,7 @@ async def submit_runpod_job(job_id: str, prompt: str, webhook_url: str, db: Sess
                 logger.info(f"Job {job_id} submitted to RunPod with ID {runpod_job_id}")
                 
                 # Start polling if no webhook URL is provided or if it's our own webhook
-                if webhook_url == f"{PUBLIC_URL}/webhook":
+                if webhook_url == "https://health-services-43i9.onrender.com/webhook":
                     asyncio.create_task(poll_runpod_job(job_id, runpod_job_id, db))
             else:
                 # Update job status to failed
