@@ -1,0 +1,19 @@
+services:
+  - type: web
+    runtime: python3
+    name: runpod-fastapi
+    # Removed the unrecognized 'env' property
+    repo: https://github.com/yourusername/your-repo-name.git # Replace with your repo
+    branch: main
+    dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: RUNPOD_API_KEY
+        sync: false # This means it won't be committed to the repo
+      - key: RUNPOD_ENDPOINT_ID
+        value: fswz4ju3asche1
+      - key: PUBLIC_URL
+        fromService:
+          type: web
+          name: runpod-fastapi
+          property: url
+    healthCheckPath: /health
