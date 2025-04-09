@@ -1,15 +1,15 @@
 import os
 import json
 import asyncio
-import requests
 import logging
 import sys, time
 import uvicorn
 import uuid
+import aiohttp  # Replace requests with aiohttp
 from fastapi import FastAPI, WebSocket, BackgroundTasks, HTTPException, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from typing import Any, Callable, TypeVar, Optional, Dict
 from sqlalchemy import create_engine, Column, String, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
@@ -142,7 +142,6 @@ async def global_exception_handler(request, exc):
 class JobRequest(BaseModel):
     prompt: str
     
-
 class JobResponse(BaseModel):
     job_id: str
     status: str
@@ -182,7 +181,7 @@ async def submit_job(request: JobRequest, background_tasks: BackgroundTasks, db:
     
     return JobResponse(job_id=job_id, status="PENDING")
 
-# Background task to submit job to RunPod
+# Background task to submit job to RunPod - FIXED VERSION
 async def submit_runpod_job(job_id: str, prompt: str, webhook_url: str, db: Session):
     try:
         data = {
@@ -190,37 +189,41 @@ async def submit_runpod_job(job_id: str, prompt: str, webhook_url: str, db: Sess
             'webhook': webhook_url
         }
         
-        async with requests.Session() as session:
-            response = await asyncio.to_thread(
-                lambda: session.post(RUNPOD_API_URL, headers=HEADERS, json=data, timeout=30.0)
-            )
-            
-            if response.status_code == 200:
-                response_data = response.json()
-                runpod_job_id = response_data.get('id')
-                
-                # Update the job record with RunPod's job ID and status
-                db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
-                if db_job:
-                    db_job.runpod_id = runpod_job_id
-                    db_job.status = "SUBMITTED"
-                    db.commit()
-                
-                logger.info(f"Job {job_id} submitted to RunPod with ID {runpod_job_id}")
-                
-                # Start polling if no webhook URL is provided or if it's our own webhook
-                if webhook_url == "https://health-services-43i9.onrender.com/webhook":
-                    asyncio.create_task(poll_runpod_job(job_id, runpod_job_id, db))
-            else:
-                # Update job status to failed
-                db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
-                if db_job:
-                    db_job.status = "FAILED"
-                    db_job.result = f"Failed to submit to RunPod: {response.text}"
-                    db.commit()
-                
-                logger.error(f"Failed to submit job {job_id} to RunPod: {response.text}")
-                
+        # Use aiohttp instead of requests for async HTTP
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                RUNPOD_API_URL, 
+                headers=HEADERS, 
+                json=data, 
+                timeout=aiohttp.ClientTimeout(total=30)
+            ) as response:
+                if response.status == 200:
+                    response_data = await response.json()
+                    runpod_job_id = response_data.get('id')
+                    
+                    # Update the job record with RunPod's job ID and status
+                    db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                    if db_job:
+                        db_job.runpod_id = runpod_job_id
+                        db_job.status = "SUBMITTED"
+                        db.commit()
+                    
+                    logger.info(f"Job {job_id} submitted to RunPod with ID {runpod_job_id}")
+                    
+                    # Start polling if no webhook URL is provided or if it's our own webhook
+                    if webhook_url == "https://health-services-43i9.onrender.com/webhook":
+                        asyncio.create_task(poll_runpod_job(job_id, runpod_job_id, db))
+                else:
+                    # Update job status to failed
+                    response_text = await response.text()
+                    db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                    if db_job:
+                        db_job.status = "FAILED"
+                        db_job.result = f"Failed to submit to RunPod: {response_text}"
+                        db.commit()
+                    
+                    logger.error(f"Failed to submit job {job_id} to RunPod: {response_text}")
+                    
     except Exception as e:
         # Update job status to failed
         db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
@@ -231,7 +234,7 @@ async def submit_runpod_job(job_id: str, prompt: str, webhook_url: str, db: Sess
             
         logger.error(f"Error submitting job {job_id} to RunPod: {str(e)}")
 
-# Poll RunPod API for job completion
+# Poll RunPod API for job completion - FIXED VERSION
 async def poll_runpod_job(job_id: str, runpod_job_id: str, db: Session):
     """Continuously polls RunPod API until job completes."""
     logger.info(f"Polling job {job_id} (RunPod ID: {runpod_job_id}) status...")
@@ -239,60 +242,65 @@ async def poll_runpod_job(job_id: str, runpod_job_id: str, db: Session):
     poll_count = 0
     max_polls = 60  # 5 minutes max (with 5-second intervals)
 
-    while poll_count < max_polls:
-        try:
-            async with requests.Session() as session:
-                response = await asyncio.to_thread(
-                    lambda: session.get(f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{runpod_job_id}", 
-                                       headers=HEADERS, 
-                                       timeout=10.0)
-                )
-                
-                response.raise_for_status()
-                status_json = response.json()
-                status = status_json.get("status")
-
-                # Update job in database
-                db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
-                if not db_job:
-                    logger.error(f"Job {job_id} not found in database during polling")
-                    break
-
-                if status == "COMPLETED":
-                    result = status_json.get("output")
-                    db_job.status = "COMPLETED"
-                    db_job.result = json.dumps(result) if result else None
-                    db.commit()
-                    logger.info(f"Job {job_id} completed successfully!")
-                    break
-                elif status == "FAILED":
-                    db_job.status = "FAILED"
-                    db_job.result = json.dumps(status_json.get("error", "No error details provided"))
-                    db.commit()
-                    logger.error(f"Job {job_id} failed!")
-                    break
-                
-                # Still in progress
-                db_job.status = status
-                db.commit()
-
-            poll_count += 1
-            await asyncio.sleep(5)
-
-        except Exception as e:
-            logger.error(f"Error polling job {job_id}: {e}")
-            
-            # Update job status on error
+    async with aiohttp.ClientSession() as session:
+        while poll_count < max_polls:
             try:
-                db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
-                if db_job:
-                    db_job.status = "POLLING_ERROR"
-                    db_job.result = f"Error polling job: {str(e)}"
+                async with session.get(
+                    f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT_ID}/status/{runpod_job_id}", 
+                    headers=HEADERS, 
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status != 200:
+                        logger.error(f"Error polling job {job_id}: HTTP {response.status}")
+                        await asyncio.sleep(5)
+                        poll_count += 1
+                        continue
+                    
+                    status_json = await response.json()
+                    status = status_json.get("status")
+
+                    # Update job in database
+                    db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                    if not db_job:
+                        logger.error(f"Job {job_id} not found in database during polling")
+                        break
+
+                    if status == "COMPLETED":
+                        result = status_json.get("output")
+                        db_job.status = "COMPLETED"
+                        db_job.result = json.dumps(result) if result else None
+                        db.commit()
+                        logger.info(f"Job {job_id} completed successfully!")
+                        break
+                    elif status == "FAILED":
+                        db_job.status = "FAILED"
+                        db_job.result = json.dumps(status_json.get("error", "No error details provided"))
+                        db.commit()
+                        logger.error(f"Job {job_id} failed!")
+                        break
+                    
+                    # Still in progress
+                    db_job.status = status
                     db.commit()
-            except Exception as db_error:
-                logger.error(f"Failed to update job status in database: {db_error}")
+
+                poll_count += 1
+                await asyncio.sleep(5)
+
+            except Exception as e:
+                logger.error(f"Error polling job {job_id}: {e}")
                 
-            break
+                # Update job status on error
+                try:
+                    db_job = db.query(JobRecord).filter(JobRecord.id == job_id).first()
+                    if db_job:
+                        db_job.status = "POLLING_ERROR"
+                        db_job.result = f"Error polling job: {str(e)}"
+                        db.commit()
+                except Exception as db_error:
+                    logger.error(f"Failed to update job status in database: {db_error}")
+                    
+                await asyncio.sleep(5)
+                poll_count += 1
 
     # If we've reached max polls, update as timed out
     if poll_count >= max_polls:
@@ -342,7 +350,7 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str, db: Session = De
             await websocket.send_json({
                 "job_id": job.id,
                 "status": job.status,
-                "result": json.loads(job.result) if job.result else None
+                "result": json.loads(job.result) if job.result and job.result != "null" else None
             })
         else:
             await websocket.send_json({"error": "Job not found"})
@@ -364,10 +372,15 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str, db: Session = De
                 last_status = job.status
                 last_result = job.result
                 
+                try:
+                    result_data = json.loads(job.result) if job.result and job.result != "null" else None
+                except json.JSONDecodeError:
+                    result_data = {"error": "Could not parse result as JSON", "raw": job.result}
+                    
                 await websocket.send_json({
                     "job_id": job.id,
                     "status": job.status,
-                    "result": json.loads(job.result) if job.result else None
+                    "result": result_data
                 })
                 
                 # Close connection if job is completed or failed
