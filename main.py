@@ -135,7 +135,7 @@ async def global_exception_handler(request, exc):
     logger.error(f"Unexpected error: {str(exc)}")
     return JSONResponse(
         status_code=500,
-        content={"message": "An unexpected error occurred."},
+        content={"message": f"An unexpected error occurred. {str(exc)}"},
     )
 
 # Pydantic models
