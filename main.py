@@ -63,7 +63,6 @@ class JobRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     prompt = Column(Text)
-    mode = Column(String, nullable=True)
     result = Column(Text, nullable=True)
 
 # Create database tables
@@ -142,7 +141,6 @@ async def global_exception_handler(request, exc):
 # Pydantic models
 class JobRequest(BaseModel):
     prompt: str
-    mode: str = Field(default="default", description="Processing mode for RunPod")
     
 
 class JobResponse(BaseModel):
