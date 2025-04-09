@@ -143,7 +143,7 @@ async def global_exception_handler(request, exc):
 class JobRequest(BaseModel):
     prompt: str
     mode: str = Field(default="default", description="Processing mode for RunPod")
-    webhook_url: Optional[str] = Field(None, description="Custom webhook URL (optional)")
+    
 
 class JobResponse(BaseModel):
     job_id: str
@@ -175,21 +175,20 @@ async def submit_job(request: JobRequest, background_tasks: BackgroundTasks, db:
         id=job_id,
         status="PENDING",
         prompt=request.prompt,
-        mode=request.mode
     )
     db.add(new_job)
     db.commit()
     
     # Submit the job to RunPod asynchronously
-    background_tasks.add_task(submit_runpod_job, job_id, request.prompt, request.mode, webhook_url, db)
+    background_tasks.add_task(submit_runpod_job, job_id, request.prompt, webhook_url, db)
     
     return JobResponse(job_id=job_id, status="PENDING")
 
 # Background task to submit job to RunPod
-async def submit_runpod_job(job_id: str, prompt: str, mode: str, webhook_url: str, db: Session):
+async def submit_runpod_job(job_id: str, prompt: str, webhook_url: str, db: Session):
     try:
         data = {
-            'input': {"prompt": prompt, "mode": mode},
+            'input': {"prompt": prompt},
             'webhook': webhook_url
         }
         
